@@ -1,0 +1,13 @@
+# Build output
+build/
+*.o
+*.a
+*.elf
+*.bin
+*.obj
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
