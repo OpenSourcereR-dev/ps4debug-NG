@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _ELF_H
 #define _ELF_H

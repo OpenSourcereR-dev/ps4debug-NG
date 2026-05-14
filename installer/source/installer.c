@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #include "installer.h"
 
@@ -75,6 +76,8 @@ static void patch_671_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x3C17F7), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x3C1702), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x459763), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 static void patch_700_v119(uint64_t kernbase) {
@@ -102,6 +105,8 @@ static void patch_700_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x2F287), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x2F192), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x26C5F3), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 static void patch_750_v119(uint64_t kernbase) {
@@ -257,6 +262,8 @@ static void patch_900_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x2716F7), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x271602), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x884BE), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 static void patch_903_v119(uint64_t kernbase) {
@@ -412,6 +419,8 @@ static void patch_1100_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x2DE037), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x2DDF42), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x36434E), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 static void patch_1102_v119(uint64_t kernbase) {
@@ -505,6 +514,8 @@ static void patch_1200_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x2BD6C7), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x2BD5D2), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x303B4E), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 static void patch_1250_v119(uint64_t kernbase) {
@@ -536,6 +547,41 @@ static void patch_1250_v119(uint64_t kernbase) {
     memcpy((void *)(kernbase + 0x2BD707), "\x90\x90", 2);
 
     memcpy((void *)(kernbase + 0x2BD612), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x303B8E), "\x90\x90\x90\x90\x90\x90", 6);
+}
+
+static void patch_1300_v119(uint64_t kernbase) {
+
+    *(uint8_t *)(kernbase + 0x2BD4ED) = 0xEB;
+
+    memcpy((void *)(kernbase + 0x3B2D30), "\x48\xC7\xC0\x01\x00\x00\x00\xC3", 8);
+
+    memcpy((void *)(kernbase + 0x3B2DA0), "\x48\xC7\xC0\x01\x00\x00\x00\xC3", 8);
+
+    memcpy((void *)(kernbase + 0x3B2DC0), "\x48\xC7\xC0\x01\x00\x00\x00\xC3", 8);
+
+    *(uint8_t *)(kernbase + 0x76BA30) = 0xC3;
+
+    memcpy((void *)(kernbase + 0x1FC4A1), "\x31\xC0\x90\x90\x90", 5);
+
+    memcpy((void *)(kernbase + 0x2FC14C), "\x90\x90\x90\x90\x90\x90", 6);
+
+    *(uint8_t *)(kernbase + 0x3669E5) = 0xEB;
+
+    memcpy((void *)(kernbase + 0x366ED1), "\xE9\x7C\x02\x00\x00", 5);
+
+    *(uint16_t *)(kernbase + 0x477CB4) = 0x9090;
+
+    *(uint8_t *)(kernbase + 0x465B0C) = 0x07;
+
+    *(uint8_t *)(kernbase + 0x465B14) = 0x07;
+
+    memcpy((void *)(kernbase + 0x2BD727), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x2BD632), "\x90\x90", 2);
+
+    memcpy((void *)(kernbase + 0x303BAE), "\x90\x90\x90\x90\x90\x90", 6);
 }
 
 void patch_kernel() {
@@ -594,6 +640,9 @@ void patch_kernel() {
             break;
         case 1250: case 1252:
             patch_1250_v119(kernbase);
+            break;
+        case 1300:
+            patch_1300_v119(kernbase);
             break;
         default:
             printf("[ps4debug-ng] unsupported firmware %u - kernel not patched\n",
@@ -674,13 +723,16 @@ int load_debugger() {
         e = e->next;
         hint = e->start;
     }
-    r = vm_map_findspace(map, hint, 0x200000, &addr);
+
+    uint64_t payload_region = ((uint64_t)(uint32_t)debuggerbin_size + 0xFFFFFull) & ~0xFFFFFull;
+    if (payload_region < 0x200000) payload_region = 0x200000;
+    r = vm_map_findspace(map, hint, payload_region, &addr);
     if (r) {
         vm_map_unlock(map);
         printf("[ps4debug-ng] failed to find free payload region!\n");
         return r;
     }
-    r = vm_map_insert(map, NULL, NULL, addr, addr + 0x200000, VM_PROT_ALL, VM_PROT_ALL, 0);
+    r = vm_map_insert(map, NULL, NULL, addr, addr + payload_region, VM_PROT_ALL, VM_PROT_ALL, 0);
     vm_map_unlock(map);
     if(r) {
         printf("[ps4debug-ng] failed to allocate payload memory!\n");
@@ -747,6 +799,6 @@ int runinstaller() {
         return 1;
     }
 
-    printf("[ps4debug-ng] PS4Debug-NG by OSR v1.2.1\n");
+    printf("[ps4debug-ng] PS4Debug-NG by OSR v1.2.2\n");
     return 0;
 }

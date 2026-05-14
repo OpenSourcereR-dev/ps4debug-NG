@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #include "server.h"
 
@@ -56,7 +57,8 @@ int cmd_handler(int fd, struct cmd_packet *packet) {
             net_send_all(fd, &len, sizeof(uint32_t));
             net_send_all(fd, PACKET_BRANDING, len);
             return 0;
-        case CMD_PROTOCOL_ID:
+        case CMD_PLATFORM_ID:
+
             w = 4;
             net_send_all(fd, &w, sizeof(w));
             return 0;
@@ -177,6 +179,13 @@ int handle_client(struct server_client *svc) {
 
         if (r) {
             goto error;
+        }
+
+        if (svc->debugging && g_pending_sig_pid != 0) {
+            scePthreadMutexLock(&g_debug_mutex);
+            int dde_r = dispatch_debug_events();
+            scePthreadMutexUnlock(&g_debug_mutex);
+            if (dde_r != 0) goto error;
         }
     }
 

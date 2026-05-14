@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef _KFIRMWARE_H
 #define _KFIRMWARE_H
 

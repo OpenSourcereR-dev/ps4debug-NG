@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _PTRACE_H
 #define _PTRACE_H

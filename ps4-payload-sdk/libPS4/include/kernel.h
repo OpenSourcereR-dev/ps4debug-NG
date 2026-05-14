@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef KERNEL_H
 #define KERNEL_H
 
@@ -10,7 +12,7 @@ extern int libKernelHandle;
 
 extern int **__stack_chk_guard;
 extern void (*__stack_chk_fail)(void);
-extern int *(*__error)();
+int *__error(void) __attribute__((visibility("hidden")));
 #define errno (*__error())
 
 extern char *(*sceKernelGetFsSandboxRandomWord)();

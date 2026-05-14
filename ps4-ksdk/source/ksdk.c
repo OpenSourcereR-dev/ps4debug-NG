@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #include "ksdk.h"
 
 uint64_t cachedKernelBase = 0;

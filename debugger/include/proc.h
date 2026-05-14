@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _PROC_H
 #define _PROC_H
@@ -17,6 +18,7 @@ struct proc_vm_map_entry {
 
 int proc_list_handle(int fd, struct cmd_packet *packet);
 int proc_read_handle(int fd, struct cmd_packet *packet);
+int proc_read_stack_handle(int fd, struct cmd_packet *packet);
 int proc_disasm_region_handle(int fd, struct cmd_packet *packet);
 int proc_extract_code_xrefs_handle(int fd, struct cmd_packet *packet);
 int proc_find_xrefs_to_handle(int fd, struct cmd_packet *packet);
@@ -39,6 +41,8 @@ int proc_auth_handle(int fd, struct cmd_packet *packet);
 int proc_scan_start_handle(int fd, struct cmd_packet *packet);
 int proc_scan_count_handle(int fd, struct cmd_packet *packet);
 int proc_scan_get_handle(int fd, struct cmd_packet *packet);
+
+int proc_assemble_handle(int fd, struct cmd_packet *packet);
 
 int proc_handle(int fd, struct cmd_packet *packet);
 

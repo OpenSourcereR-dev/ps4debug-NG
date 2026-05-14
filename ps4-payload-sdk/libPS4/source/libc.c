@@ -1,41 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #include "kernel.h"
 #include "module.h"
 
 #include "libc.h"
 
-void *(*malloc)(size_t size);
-void (*free)(void *ptr);
-void *(*calloc)(size_t num, size_t size);
-void *(*realloc)(void *ptr, size_t size);
-void *(*memalign)(size_t boundary, size_t size);
-void *(*memset)(void *destination, int value, size_t num);
-void *(*memcpy)(void *destination, const void *source, size_t num);
-int (*memcmp)(const void *s1, const void *s2, size_t n);
-char *(*strcpy)(char *destination, const char *source);
-char *(*strncpy)(char *destination, const char *source, size_t num);
-char *(*strcat)(char *dest, const char *src);
+static void  *(*_p_malloc)(size_t);
+static void   (*_p_free)(void *);
+static void  *(*_p_calloc)(size_t, size_t);
+static void  *(*_p_realloc)(void *, size_t);
+static void  *(*_p_memalign)(size_t, size_t);
+static void  *(*_p_memset)(void *, int, size_t);
+static void  *(*_p_memcpy)(void *, const void *, size_t);
+static void  *(*_p_memmove)(void *, const void *, size_t);
+static int    (*_p_memcmp)(const void *, const void *, size_t);
+static char  *(*_p_strcpy)(char *, const char *);
+static char  *(*_p_strncpy)(char *, const char *, size_t);
+static char  *(*_p_strcat)(char *, const char *);
+static char  *(*_p_strncat)(char *, const char *, size_t);
+static size_t (*_p_strlen)(const char *);
+static int    (*_p_strcmp)(const char *, const char *);
+static int    (*_p_strncmp)(const char *, const char *, size_t);
+static char  *(*_p_strchr)(const char *, int);
+static char  *(*_p_strrchr)(const char *, int);
+static char  *(*_p_strstr)(const char *, const char *);
+static char  *(*_p_strerror)(int);
+static void   (*_p_bcopy)(const void *, void *, size_t);
+static unsigned long long (*_p_strtoull)(const char *, char **, int);
+static int    (*_p_vsnprintf)(char *, size_t, const char *, va_list);
+static int    (*_p_vsscanf)(const char *, const char *, va_list);
+
 char *(*strtok)(char *restrict s1, const char *restrict s2);
-unsigned long long int (*strtoull)(const char* str, char** endptr, int base);
-char *(*strncat)(char *dest, const char *src, size_t n);
-size_t (*strlen)(const char *s);
-int (*strcmp)(const char *s1, const char *s2);
-int (*strncmp)(const char *s1, const char *s2, size_t n);
-int (*sprintf)(char *str, const char *format, ...);
-int (*snprintf)(char *str, size_t size, const char *format, ...);
-int (*sscanf)(const char *str, const char *format, ...);
-char *(*strchr)(const char *s, int c);
-char *(*strrchr)(const char *s, int c);
-char *(*strstr)(char *str1, char *str2);
 char *(*strdup)(const char *s);
 char *(*index)(const char *s, int c);
 char *(*rindex)(const char *s, int c);
 int (*isdigit)(int c);
 int (*atoi)(const char *s);
 size_t (*strlcpy)(char *dst, const char *src, size_t size);
-char *(*strerror)(int errnum);
 void *(*_Getpctype)();
 unsigned long (*_Stoul)(const char *, char **, int);
-void (*bcopy)(const void *s1, void *s2, size_t n);
 
 void (*srand)(unsigned int seed);
 int (*rand)(void);
@@ -69,42 +72,90 @@ long int (*ftell)(FILE *stream);
 int (*fclose)(FILE *stream);
 int (*fprintf)(FILE *stream, const char *format, ...);
 
+void  *malloc(size_t n)                          { return _p_malloc(n); }
+void   free(void *p)                             { _p_free(p); }
+void  *calloc(size_t n, size_t s)                { return _p_calloc(n, s); }
+void  *realloc(void *p, size_t s)                { return _p_realloc(p, s); }
+void  *memalign(size_t a, size_t s)              { return _p_memalign(a, s); }
+void  *memset(void *d, int v, size_t n)          { return _p_memset(d, v, n); }
+void  *memcpy(void *d, const void *s, size_t n)  { return _p_memcpy(d, s, n); }
+void  *memmove(void *d, const void *s, size_t n) { return _p_memmove(d, s, n); }
+int    memcmp(const void *a, const void *b, size_t n) { return _p_memcmp(a, b, n); }
+char  *strcpy(char *d, const char *s)            { return _p_strcpy(d, s); }
+char  *strncpy(char *d, const char *s, size_t n) { return _p_strncpy(d, s, n); }
+char  *strcat(char *d, const char *s)            { return _p_strcat(d, s); }
+char  *strncat(char *d, const char *s, size_t n) { return _p_strncat(d, s, n); }
+size_t strlen(const char *s)                     { return _p_strlen(s); }
+int    strcmp(const char *a, const char *b)      { return _p_strcmp(a, b); }
+int    strncmp(const char *a, const char *b, size_t n) { return _p_strncmp(a, b, n); }
+char  *strchr(const char *s, int c)              { return _p_strchr(s, c); }
+char  *strrchr(const char *s, int c)             { return _p_strrchr(s, c); }
+char  *strstr(const char *a, const char *b)      { return _p_strstr(a, b); }
+char  *strerror(int e)                           { return _p_strerror(e); }
+void   bcopy(const void *s, void *d, size_t n)   { _p_bcopy(s, d, n); }
+unsigned long long int strtoull(const char *s, char **e, int b) { return _p_strtoull(s, e, b); }
+
+int vsnprintf(char *s, size_t n, const char *f, va_list ap) { return _p_vsnprintf(s, n, f, ap); }
+int vsscanf(const char *s, const char *f, va_list ap)       { return _p_vsscanf(s, f, ap); }
+int snprintf(char *s, size_t n, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int r = _p_vsnprintf(s, n, f, ap);
+  va_end(ap);
+  return r;
+}
+int sprintf(char *s, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int r = _p_vsnprintf(s, (size_t)-1, f, ap);
+  va_end(ap);
+  return r;
+}
+int sscanf(const char *s, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int r = _p_vsscanf(s, f, ap);
+  va_end(ap);
+  return r;
+}
+
+#define RESOLVE_P(module, name)      getFunctionAddressByName(module, #name, &_p_##name)
+#define RESOLVE_AS(module, str, dst) getFunctionAddressByName(module, str, &(dst))
+
 void initLibc(void) {
   int libc = sceKernelLoadStartModule("libSceLibcInternal.sprx", 0, NULL, 0, 0, 0);
 
-  RESOLVE(libc, malloc);
-  RESOLVE(libc, free);
-  RESOLVE(libc, calloc);
-  RESOLVE(libc, realloc);
-  RESOLVE(libc, memalign);
-  RESOLVE(libc, memset);
-  RESOLVE(libc, memcpy);
-  RESOLVE(libc, memcmp);
-  RESOLVE(libc, strcpy);
-  RESOLVE(libc, strncpy);
-  RESOLVE(libc, strcat);
+  RESOLVE_P(libc, malloc);
+  RESOLVE_P(libc, free);
+  RESOLVE_P(libc, calloc);
+  RESOLVE_P(libc, realloc);
+  RESOLVE_P(libc, memalign);
+  RESOLVE_P(libc, memset);
+  RESOLVE_P(libc, memcpy);
+  RESOLVE_AS(libc, "memmove", _p_memmove);
+  RESOLVE_P(libc, memcmp);
+  RESOLVE_P(libc, strcpy);
+  RESOLVE_P(libc, strncpy);
+  RESOLVE_P(libc, strcat);
+  RESOLVE_P(libc, strncat);
+  RESOLVE_P(libc, strlen);
+  RESOLVE_P(libc, strcmp);
+  RESOLVE_P(libc, strncmp);
+  RESOLVE_P(libc, strchr);
+  RESOLVE_P(libc, strrchr);
+  RESOLVE_P(libc, strstr);
+  RESOLVE_P(libc, strerror);
+  RESOLVE_P(libc, bcopy);
+  RESOLVE_P(libc, strtoull);
+  RESOLVE_AS(libc, "vsnprintf", _p_vsnprintf);
+  RESOLVE_AS(libc, "vsscanf",   _p_vsscanf);
+
   RESOLVE(libc, strtok);
-  RESOLVE(libc, strtoull);
-  RESOLVE(libc, strncat);
-  RESOLVE(libc, strlen);
-  RESOLVE(libc, strcmp);
-  RESOLVE(libc, strncmp);
-  RESOLVE(libc, sprintf);
-  RESOLVE(libc, snprintf);
-  RESOLVE(libc, sscanf);
-  RESOLVE(libc, strchr);
-  RESOLVE(libc, strrchr);
-  RESOLVE(libc, strstr);
   RESOLVE(libc, strdup);
   RESOLVE(libc, index);
   RESOLVE(libc, rindex);
   RESOLVE(libc, isdigit);
   RESOLVE(libc, atoi);
   RESOLVE(libc, strlcpy);
-  RESOLVE(libc, strerror);
   RESOLVE(libc, _Getpctype);
   RESOLVE(libc, _Stoul);
-  RESOLVE(libc, bcopy);
 
   RESOLVE(libc, srand);
   RESOLVE(libc, rand);

@@ -167,9 +167,12 @@ All five are handled inline in `cmd_handler` (server.c:52-71).
 - **Request body:** none.
 - **Response:** `uint32_t length`, then `length` bytes of `PACKET_BRANDING`.
 
-#### `CMD_PROTOCOL_ID = 0xBD000502`
+#### `CMD_PLATFORM_ID = 0xBD000502`
 - **Request body:** none.
-- **Response:** `uint16_t` - hardcoded `4`.
+- **Response:** `uint16_t` platform tag - hardcoded `4` (PS4). Clients display this
+  as the console version (e.g. logged as "Console PS4"). Was previously named
+  `CMD_PROTOCOL_ID`; renamed to disambiguate from the wire-protocol version
+  reported by `CMD_VERSION` (which is the server protocol revision, currently `1.3`).
 
 #### `CMD_PROC_NOP = 0xBDAACC06`
 - **Request body:** none.
@@ -314,6 +317,53 @@ Kind bitmask (protocol.h:139-142):
   `{uint32_t pid; uint64_t scan_address; uint32_t scan_length; uint64_t target_address;}`.
 - **Response:** `CMD_SUCCESS`, `uint32_t num`, then `num × (uint64_t address, uint8_t kind)`
   - the `kind` byte reuses the `disasm_instr_entry.kind` bitmask.
+
+#### `CMD_PROC_READ_STACK = 0xBDAA0023` (proc.c)
+Server-side RBP-chain walk. The server walks the frame chain itself and bundles
+every frame's data (saved RBP, return address, frame-local bytes, and a code
+window around the return address) into one response, so clients avoid paying
+~4 TCP round-trips per stack frame. Clients can feature-detect this command via
+the `CMD_BRANDING` version string (added in v1.2.2).
+- **Request body:** `struct cmd_proc_read_stack_packet` (24 bytes):
+  `{uint32_t pid; uint64_t rbp; uint64_t rsp; uint32_t depth;}`
+  - `rbp` / `rsp` describe the local (top) frame; `depth` caps frames returned (incl. local).
+- **Response:** `CMD_SUCCESS`, `uint32_t bundle_len`, then `bundle_len` bytes:
+  ```
+  u32 n_frames
+  per frame {
+      u64 rbp; u64 rsp; u64 saved_rbp; u64 ret_addr;
+      u32 flags;            // bit0: frame-locals omitted (oversized/invalid) — read rsp..rbp yourself
+      u32 frame_locals_len;
+      u32 code_len;         // bytes of code at (ret_addr - 10); 0 if unavailable
+      u8  frame_locals[frame_locals_len];
+      u8  code[code_len];
+  }
+  ```
+  - Caps: `CMD_PROC_READ_STACK_MAX_DEPTH = 64`, `CMD_PROC_READ_STACK_LOCALS_CAP = 0x1000` per frame,
+    `CMD_PROC_READ_STACK_CODE_OFF = 10`, `CMD_PROC_READ_STACK_CODE_LEN = 200`.
+
+#### `0xBDAA0024` - assemble x86-64 (proc.c, `proc_assemble_handle`)
+Assemble x86-64 text into machine bytes using the Keystone (LLVM-MC) assembler
+embedded in the payload. Pure userspace - needs no attached process, no
+elevation. The on-console equivalent of what Reaper Studio does with its
+client-side `keystone.dll` when applying `VarType.ASM` patches.
+**The bare opcode is intentionally NOT given a `CMD_*` macro** - it's a raw
+literal in `proc_handle`'s switch - so the published `CMD_*` set (which some
+clients enumerate) stays unchanged. Clients that need it should send the literal.
+- **Request body:** `struct cmd_proc_assemble_packet` (12 bytes):
+  `{uint64_t base_addr; uint32_t ks_opt_syntax;}`
+  - `base_addr` is what Keystone resolves PC-relative operands against.
+  - `ks_opt_syntax` = 0 keeps the engine default (Intel); pass a Keystone
+    `KS_OPT_SYNTAX_*` value (1=Intel, 2=ATT, 3=NASM, 4=MASM, 5=GAS) to switch.
+- **Trailing data:** `(datalen - 12)` bytes of asm text. NUL-termination not required.
+- **Response on success:** `CMD_SUCCESS`, `struct cmd_proc_assemble_ok` (8 bytes,
+  `{uint32_t byte_len; uint32_t insn_count;}`), then `byte_len` bytes of machine code.
+- **Response on assembler error:** `CMD_ERROR`, `struct cmd_proc_assemble_err`
+  (8 bytes, `{uint32_t ks_errno; uint32_t msg_len;}`), then `msg_len` bytes of
+  the human-readable Keystone error (`ks_strerror`).
+- **Caveats:** Keystone here was built with `LLVM_ENABLE_THREADS=OFF`; the
+  payload's command dispatcher serialises clients so this is fine for the
+  current usage, but concurrent assembles would need an external mutex.
 
 #### `CMD_PROC_SCAN_AOB = 0xBDAA0501` (proc.c:1582-1691) - **requires auth bit 1**
 - **Request body:** `struct cmd_proc_scan_aob_packet` (22 bytes):
@@ -507,6 +557,26 @@ before `cmd_handler` runs and routes to `debug_attach_handle_svc` instead.
 - **Request body:** none.
 - **Response:** `CMD_SUCCESS`. No side effect (ping variant).
 
+#### `0xBDDD0006` - foreground-app metadata (console.c, `console_foreground_app_handle`)
+Identify the currently-foregrounded game and return its metadata (pid, titleid,
+contentid, process name, and version). Resolves the version from the title's
+`param.sfo`. **Raw literal in `console_handle`'s switch — no `CMD_*` macro**
+(same rationale as `0xBDAA0024`).
+- **Request body:** none.
+- **Response:** `CMD_SUCCESS`, `struct cmd_console_foreground_app_response` (132 bytes):
+  ```
+  u32  pid;
+  char titleid[16];
+  char contentid[64];
+  char name[40];
+  char app_ver[8];      // PS4 "XX.YY" version string from param.sfo
+  ```
+- **Behaviour:** if there is no foreground game, all fields are zeroed (`pid==0`).
+- **Version selection:** when both `APP_VER` and `VERSION` are present in
+  `param.sfo`, the server returns the lexically larger of the two so that
+  packer-mistakes (where the bundled `VERSION` overtakes `APP_VER`) still
+  yield the higher-precedence version string.
+
 ---
 
 ## 3. Kernel-side syscall interface
@@ -560,7 +630,7 @@ clients cannot invoke it directly.
 | `0xBD000001` | `CMD_VERSION`                    | inline (server.c:53)            |       |
 | `0xBD000500` | `CMD_FW_VERSION`                 | inline (server.c:55)            |       |
 | `0xBD000501` | `CMD_BRANDING`                   | inline (server.c:59)            |       |
-| `0xBD000502` | `CMD_PROTOCOL_ID`                | inline (server.c:64)            |       |
+| `0xBD000502` | `CMD_PLATFORM_ID`                | inline (server.c:64)            |       |
 | `0xBDAA0001` | `CMD_PROC_LIST`                  | `proc_list_handle`              |       |
 | `0xBDAA0002` | `CMD_PROC_READ`                  | `proc_read_handle`              |       |
 | `0xBDAA0003` | `CMD_PROC_WRITE`                 | `proc_write_handle`             |       |
@@ -578,6 +648,8 @@ clients cannot invoke it directly.
 | `0xBDAA0020` | `CMD_PROC_DISASM_REGION`         | `proc_disasm_region_handle`     |       |
 | `0xBDAA0021` | `CMD_PROC_EXTRACT_CODE_XREFS`    | `proc_extract_code_xrefs_handle`|       |
 | `0xBDAA0022` | `CMD_PROC_FIND_XREFS_TO`         | `proc_find_xrefs_to_handle`     |       |
+| `0xBDAA0023` | `CMD_PROC_READ_STACK`            | `proc_read_stack_handle`        |       |
+| `0xBDAA0024` | _(raw literal, no macro)_        | `proc_assemble_handle`          |       |
 | `0xBDAA0501` | `CMD_PROC_SCAN_AOB`              | `proc_scan_aob_handle`          | bit 1 |
 | `0xBDAA0502` | `CMD_PROC_SCAN_AOB_MULTI`        | `proc_scan_aob_multi_handle`    | bit 1 |
 | `0xBDAACCFF` | `CMD_PROC_AUTH`                  | `proc_auth_handle`              |       |
@@ -611,6 +683,7 @@ clients cannot invoke it directly.
 | `0xBDDD0003` | `CMD_CONSOLE_PRINT`              | `console_print_handle`          |       |
 | `0xBDDD0004` | `CMD_CONSOLE_NOTIFY`             | `console_notify_handle`         |       |
 | `0xBDDD0005` | `CMD_CONSOLE_INFO`               | inline (debug.c:129)            |       |
+| `0xBDDD0006` | _(raw literal, no macro)_        | `console_foreground_app_handle` |       |
 
 ---
 
@@ -642,6 +715,8 @@ All structs are `__attribute__((packed))`. Sizes match the `CMD_*_PACKET_SIZE` m
 | `cmd_proc_free_packet`                  | 16   | `u32 pid; u64 address; u32 length;`                                       |
 | `cmd_proc_disasm_packet`                | 20   | `u32 pid; u64 address; u32 length; u32 max_entries;`                      |
 | `cmd_proc_xrefs_to_packet`              | 24   | `u32 pid; u64 scan_address; u32 scan_length; u64 target_address;`         |
+| `cmd_proc_read_stack_packet`            | 24   | `u32 pid; u64 rbp; u64 rsp; u32 depth;`                                   |
+| `cmd_proc_assemble_packet`              | 12   | `u64 base_addr; u32 ks_opt_syntax;` (followed by asm text on the wire)    |
 | `cmd_debug_attach_packet`               | 8    | `u32 pid; u32 client_ip;`                                                 |
 | `cmd_debug_breakpt_packet`              | 16   | `u32 index, enabled; u64 address;`                                        |
 | `cmd_debug_watchpt_packet`              | 24   | `u32 index, enabled, length, breaktype; u64 address;`                     |
@@ -664,6 +739,9 @@ All structs are `__attribute__((packed))`. Sizes match the `CMD_*_PACKET_SIZE` m
 | `cmd_proc_elf_rpc_response`             | 8    | `u64 entry;`                                                              |
 | `cmd_proc_alloc_response`               | 8    | `u64 address;`                                                            |
 | `cmd_proc_info_response`                | 188  | `u32 pid; char name[40], path[64], titleid[16], contentid[64];`           |
+| `cmd_proc_assemble_ok`                  | 8    | `u32 byte_len; u32 insn_count;` (followed by `byte_len` machine bytes)    |
+| `cmd_proc_assemble_err`                 | 8    | `u32 ks_errno; u32 msg_len;` (followed by `msg_len` chars of `ks_strerror`) |
+| `cmd_console_foreground_app_response`   | 132  | `u32 pid; char titleid[16], contentid[64], name[40], app_ver[8];`         |
 | `cmd_debug_thrinfo_response`            | 40   | `u32 lwpid, priority; char name[32];`                                     |
 | `disasm_instr_entry` (streamed)         | 32   | see §2.2                                                                  |
 

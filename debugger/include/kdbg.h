@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _KDEBUGGER_H
 #define _KDEBUGGER_H

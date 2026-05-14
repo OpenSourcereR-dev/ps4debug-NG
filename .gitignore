@@ -6,6 +6,11 @@ build/
 *.bin
 *.obj
 
+# Whitelist the vendored prebuilt static libs (needed to link the debugger
+# without rebuilding their upstreams from source).
+!debugger/third_party/keystone/lib/libkeystone.a
+!debugger/third_party/cxxrt/lib/*.a
+
 # Editor / OS
 .DS_Store
 Thumbs.db

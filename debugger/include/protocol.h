@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _PROTOCOL_H
 #define _PROTOCOL_H
@@ -7,16 +8,17 @@
 #include "kdbg.h"
 
 #define PACKET_VERSION          "1.3"
-#define PACKET_BRANDING         "ps4debug-NG by OSR v1.2.1"
+#define PACKET_BRANDING         "ps4debug-NG by OSR v1.2.2"
 #define PACKET_MAGIC            0xFFAABBCC
 
 #define CMD_VERSION             0xBD000001
 #define CMD_FW_VERSION          0xBD000500
 #define CMD_BRANDING            0xBD000501
-#define CMD_PROTOCOL_ID         0xBD000502
+#define CMD_PLATFORM_ID         0xBD000502
 
 #define CMD_PROC_LIST           0xBDAA0001
 #define CMD_PROC_READ           0xBDAA0002
+#define CMD_PROC_READ_STACK     0xBDAA0023
 #define CMD_PROC_WRITE          0xBDAA0003
 #define CMD_PROC_MAPS           0xBDAA0004
 #define CMD_PROC_INTALL         0xBDAA0005
@@ -31,7 +33,6 @@
 
 #define CMD_PROC_ELF_RPC        0xBDAA0010
 
-/* Disassembler-backed commands (Zydis). */
 #define CMD_PROC_DISASM_REGION       0xBDAA0020
 #define CMD_PROC_EXTRACT_CODE_XREFS  0xBDAA0021
 #define CMD_PROC_FIND_XREFS_TO       0xBDAA0022
@@ -104,13 +105,38 @@ struct cmd_proc_read_packet {
 } __attribute__((packed));
 #define CMD_PROC_READ_PACKET_SIZE 16
 
-/* Zydis-backed disassembly commands. Request layouts: */
+struct cmd_proc_read_stack_packet {
+    uint32_t pid;
+    uint64_t rbp;
+    uint64_t rsp;
+    uint32_t depth;
+} __attribute__((packed));
+#define CMD_PROC_READ_STACK_PACKET_SIZE 24
+
+#define CMD_PROC_READ_STACK_CODE_OFF   10u
+#define CMD_PROC_READ_STACK_CODE_LEN   200u
+#define CMD_PROC_READ_STACK_LOCALS_CAP 0x1000u
+#define CMD_PROC_READ_STACK_MAX_DEPTH  64u
+
+#define CMD_PROC_ASSEMBLE_HDR_SIZE     12u
+struct cmd_proc_assemble_packet {
+    uint64_t base_addr;
+    uint32_t ks_opt_syntax;
+} __attribute__((packed));
+struct cmd_proc_assemble_ok {
+    uint32_t byte_len;
+    uint32_t insn_count;
+} __attribute__((packed));
+struct cmd_proc_assemble_err {
+    uint32_t ks_errno;
+    uint32_t msg_len;
+} __attribute__((packed));
 
 struct cmd_proc_disasm_packet {
     uint32_t pid;
     uint64_t address;
-    uint32_t length;        /* bytes of code to disassemble, up to max_out_entries */
-    uint32_t max_entries;   /* cap on instructions returned */
+    uint32_t length;
+    uint32_t max_entries;
 } __attribute__((packed));
 #define CMD_PROC_DISASM_PACKET_SIZE 20
 
@@ -122,20 +148,16 @@ struct cmd_proc_xrefs_to_packet {
 } __attribute__((packed));
 #define CMD_PROC_XREFS_TO_PACKET_SIZE 24
 
-/* Per-instruction packed record returned by disasm. Kind bitmask:
- *   0x01 CALL   0x02 RET    0x04 UNCONDITIONAL JMP   0x08 CONDITIONAL BRANCH
- *   0x10 HAS_MEM_OPERAND   0x20 MEM_IS_RIP_REL   0x40 MEM_READ   0x80 MEM_WRITE
- */
 struct disasm_instr_entry {
-    uint64_t addr;              /* instruction address */
-    uint64_t rip_rel_target;    /* resolved absolute target if MEM_IS_RIP_REL set, 0 else */
-    int64_t  mem_disp;          /* [base + index*scale + disp] displacement */
+    uint64_t addr;
+    uint64_t rip_rel_target;
+    int64_t  mem_disp;
     uint8_t  length;
     uint8_t  kind;
-    uint8_t  mem_base_reg;      /* ZydisRegister truncated to u8; 0 if none */
+    uint8_t  mem_base_reg;
     uint8_t  mem_index_reg;
-    uint8_t  mem_scale;         /* 1/2/4/8, 0 if none */
-    uint8_t  mnemonic_lo;       /* ZydisMnemonic low byte (for category hints) */
+    uint8_t  mem_scale;
+    uint8_t  mnemonic_lo;
     uint16_t pad;
 } __attribute__((packed));
 #define DISASM_INSTR_ENTRY_SIZE 32

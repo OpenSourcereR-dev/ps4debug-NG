@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef LIBC_H
 #define LIBC_H
 
 #include "types.h"
 #include "file.h"
+#include <stdarg.h>
 
 typedef struct DIR DIR;
 typedef int FILE;
@@ -11,40 +14,43 @@ typedef int FILE;
 #define SEEK_CUR 1
 #define SEEK_END 2
 
-extern void *(*malloc)(size_t size);
-extern void (*free)(void *ptr);
-extern void *(*calloc)(size_t num, size_t size);
-extern void *(*realloc)(void *ptr, size_t size);
-extern void *(*memalign)(size_t boundary, size_t size);
-extern void *(*memset)(void *destination, int value, size_t num);
-extern void *(*memcpy)(void *destination, const void *source, size_t num);
-extern int (*memcmp)(const void *s1, const void *s2, size_t n);
-extern char *(*strcpy)(char *destination, const char *source);
-extern char *(*strncpy)(char *destination, const char *source, size_t num);
-extern char *(*strcat)(char *dest, const char *src);
+void  *malloc(size_t size);
+void   free(void *ptr);
+void  *calloc(size_t num, size_t size);
+void  *realloc(void *ptr, size_t size);
+void  *memalign(size_t boundary, size_t size);
+void  *memset(void *destination, int value, size_t num);
+void  *memcpy(void *destination, const void *source, size_t num);
+void  *memmove(void *destination, const void *source, size_t num);
+int    memcmp(const void *s1, const void *s2, size_t n);
+char  *strcpy(char *destination, const char *source);
+char  *strncpy(char *destination, const char *source, size_t num);
+char  *strcat(char *dest, const char *src);
+char  *strncat(char *dest, const char *src, size_t n);
+size_t strlen(const char *s);
+int    strcmp(const char *s1, const char *s2);
+int    strncmp(const char *s1, const char *s2, size_t n);
+char  *strchr(const char *s, int c);
+char  *strrchr(const char *s, int c);
+char  *strstr(const char *str1, const char *str2);
+char  *strerror(int errnum);
+void   bcopy(const void *s1, void *s2, size_t n);
+unsigned long long int strtoull(const char *str, char **endptr, int base);
+int    sprintf(char *str, const char *format, ...);
+int    snprintf(char *str, size_t size, const char *format, ...);
+int    vsnprintf(char *str, size_t size, const char *format, va_list ap);
+int    sscanf(const char *str, const char *format, ...);
+int    vsscanf(const char *str, const char *format, va_list ap);
+
 extern char *(*strtok)(char *restrict s1, const char *restrict s2);
-extern unsigned long long int (*strtoull)(const char* str, char** endptr, int base);
-extern char *(*strncat)(char *dest, const char *src, size_t n);
-extern size_t (*strlen)(const char *s);
-extern int (*strcmp)(const char *s1, const char *s2);
-extern int (*strncmp)(const char *s1, const char *s2, size_t n);
-extern int (*sprintf)(char *str, const char *format, ...);
-extern int (*snprintf)(char *str, size_t size, const char *format, ...);
-extern int (*sscanf)(const char *str, const char *format, ...);
-extern char *(*strchr)(const char *s, int c);
-extern char *(*strrchr)(const char *s, int c);
-extern char *(*strstr)(char *str1, char *str2);
 extern char *(*strdup)(const char *s);
 extern char *(*index)(const char *s, int c);
-extern char *(*rindex)(const char *s, int c);
 extern char *(*rindex)(const char *s, int c);
 extern int (*isdigit)(int c);
 extern int (*atoi)(const char *s);
 extern size_t (*strlcpy)(char *dst, const char *src, size_t size);
-extern char *(*strerror)(int errnum);
 extern void *(*_Getpctype)();
 extern unsigned long (*_Stoul)(const char *, char **, int);
-extern void (*bcopy)(const void *s1, void *s2, size_t n);
 
 extern void (*srand)(unsigned int seed);
 extern int (*rand)(void);

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef _SPARSE_H
 #define _SPARSE_H
 

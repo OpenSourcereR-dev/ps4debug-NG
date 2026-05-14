@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef STRINGS_H
 #define STRINGS_H
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #include "kernel.h"
 #include "module.h"
 #include "file.h"

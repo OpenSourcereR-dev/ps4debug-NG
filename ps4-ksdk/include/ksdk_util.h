@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef KSDK_UTIL_H
 #define KSDK_UTIL_H

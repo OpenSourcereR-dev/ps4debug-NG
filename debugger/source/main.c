@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #include <ps4.h>
 #include "ptrace.h"
@@ -6,6 +7,8 @@
 #include "protocol.h"
 #include "net.h"
 
+extern void run_init_array(void);
+
 int _main(void) {
 
     initKernel();
@@ -13,6 +16,8 @@ int _main(void) {
     initPthread();
     initNetwork();
     initSysUtil();
+
+    run_init_array();
 
     sceKernelSleep(2);
 
@@ -30,7 +35,7 @@ int _main(void) {
 
         if (strlen(ip_buf) > 4) {
 
-            sceSysUtilSendSystemNotificationWithText(222, "ps4debug-NG by OSR v1.2.1\nBased on source by golden\n\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0Inspired by\nCtn, SiSTRo & DeathRGH\n\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xE2\x9D\xA4\xE2\x9D\xA4\xE2\x9D\xA4\xE2\x9D\xA4");
+            sceSysUtilSendSystemNotificationWithText(222, "ps4debug-NG by OSR v1.2.2\nBased on source by golden\n\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0Inspired by\nCtn, SiSTRo & DeathRGH\n\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xE2\x9D\xA4\xE2\x9D\xA4\xE2\x9D\xA4\xE2\x9D\xA4");
             retry = 0;
             start_server();
             continue;
@@ -39,7 +44,7 @@ int _main(void) {
         int next = retry + 1;
         if (retry == 0) {
 
-            sceSysUtilSendSystemNotificationWithText(222, "ps4debug-ng by OpenSourcerer v1.2.1 disconnected.");
+            sceSysUtilSendSystemNotificationWithText(222, "ps4debug-ng by OpenSourcerer v1.2.2 disconnected.");
             sceKernelSleep(2);
         } else if (next <= 99) {
             sceKernelSleep(2);

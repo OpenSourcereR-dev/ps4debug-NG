@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef SYSCALL_H
 #define SYSCALL_H
 

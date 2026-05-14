@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #ifndef _ERRNO_H
 #define _ERRNO_H
 

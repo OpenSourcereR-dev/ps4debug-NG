@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #include "debug.h"
 int g_debugging;
@@ -23,6 +24,9 @@ int connect_debugger(struct debug_context *dbgctx, struct sockaddr_in *client) {
     if(dbgctx->dbgfd <= 0) {
         return 1;
     }
+
+    int flag = 1;
+    sceNetSetsockopt(dbgctx->dbgfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(flag));
 
     r = sceNetConnect(dbgctx->dbgfd, (struct sockaddr *)&server, sizeof(server));
     if(r) {
@@ -89,6 +93,73 @@ int g_pending_sig_pid;
 int g_pending_signal;
 long g_last_alive_check;
 
+#define BP_DISABLE_VERIFY_MAX 16
+static uint64_t g_recently_disabled_bps[BP_DISABLE_VERIFY_MAX];
+static int      g_recently_disabled_count = 0;
+
+static int bp_count_stuck_and_rewind(const uint64_t *bp_addrs, int n_bps,
+                                     const char *tag) {
+    int stuck = 0;
+    if (n_bps <= 0) return 0;
+
+    int numlwps = kern_ptrace(PT_GETNUMLWPS, (int)g_debug_ctx.pid, 0, 0);
+    if (numlwps <= 0) return 0;
+
+    uint32_t *lwpids = (uint32_t *)net_alloc_buffer((size_t)numlwps * sizeof(uint32_t));
+    if (lwpids && kern_ptrace(PT_GETLWPLIST, (int)g_debug_ctx.pid, lwpids, numlwps) > 0) {
+        struct __reg64 regs;
+        for (int i = 0; i < numlwps; i++) {
+            errno = 0;
+            if (kern_ptrace(PT_GETREGS, (int)lwpids[i], &regs, 0) == -1) continue;
+            for (int b = 0; b < n_bps; b++) {
+                uint64_t a = bp_addrs[b];
+                if (regs.r_rip == a + 1) {
+                    regs.r_rip = a;
+                    kern_ptrace(PT_SETREGS, (int)lwpids[i], &regs, 0);
+                    uprintf("[%s] LWP %u rewound 0x%lx->0x%lx",
+                            tag, lwpids[i],
+                            (unsigned long)(a + 1), (unsigned long)a);
+                    stuck++;
+                    break;
+                } else if (regs.r_rip == a) {
+                    stuck++;
+                    break;
+                }
+            }
+        }
+    }
+    if (lwpids) free(lwpids);
+    return stuck;
+}
+
+static void bp_resume_n(int n, const char *tag) {
+    if (n <= 0) return;
+    for (int i = 0; i < n && i < 256; i++) {
+        kern_ptrace(PT_CONTINUE, (int)g_debug_ctx.pid, (void *)1, 0);
+    }
+    uprintf("[%s] resumed %d stuck LWPs", tag, n);
+}
+
+static int bp_iterative_sweep(const uint64_t *bp_addrs, int n_bps,
+                              const char *tag) {
+    int total_resumed = 0;
+    for (int round = 0; round < 8; round++) {
+        int stuck = bp_count_stuck_and_rewind(bp_addrs, n_bps, tag);
+        if (stuck == 0) break;
+        bp_resume_n(stuck, tag);
+        total_resumed += stuck;
+    }
+    return total_resumed;
+}
+
+static void bp_disable_verify_sweep(void) {
+    if (g_recently_disabled_count <= 0) return;
+    bp_iterative_sweep(g_recently_disabled_bps,
+                       g_recently_disabled_count,
+                       "bp-disable-rescue");
+    g_recently_disabled_count = 0;
+}
+
 int debug_process_stop_handle(int fd, struct cmd_packet *packet) {
     if (!packet->data) {
 
@@ -153,7 +224,7 @@ int debug_attach_handle_svc(struct server_client *svc, struct cmd_packet *packet
     {
         int attach_status = 0;
         int spins = 0;
-        while (wait4((int)pid, &attach_status, 1 /* WNOHANG */, NULL) <= 0) {
+        while (wait4((int)pid, &attach_status, 1 , NULL) <= 0) {
             if (++spins > 200) break;
             sceKernelUsleep(1000);
         }
@@ -206,10 +277,22 @@ void debug_full_teardown(struct server_client *svc) {
 
     if (alive) {
 
-        for (int i = 0; i < MAX_BPS; i++) {
-            sys_proc_rw(g_debug_ctx.pid, g_debug_ctx.bp[i].address,
-                        &g_debug_ctx.bp[i].saved_byte, 1, 1);
+        uint64_t enabled_addrs[MAX_BPS];
+        int n_enabled = 0;
+        for (int b = 0; b < MAX_BPS; b++) {
+            if (g_debug_ctx.bp[b].enabled) {
+                enabled_addrs[n_enabled++] = g_debug_ctx.bp[b].address;
+            }
         }
+
+        for (int b = 0; b < MAX_BPS; b++) {
+            if (g_debug_ctx.bp[b].enabled) {
+                sys_proc_rw(g_debug_ctx.pid, g_debug_ctx.bp[b].address,
+                            &g_debug_ctx.bp[b].saved_byte, 1, 1);
+            }
+        }
+
+        bp_iterative_sweep(enabled_addrs, n_enabled, "detach-rescue");
 
         int count = kern_ptrace(PT_GETNUMLWPS, g_debug_ctx.pid, 0, 0);
         if (count > 0) {
@@ -223,8 +306,7 @@ void debug_full_teardown(struct server_client *svc) {
             if (lwpids) free(lwpids);
         }
 
-        kern_ptrace(PT_CONTINUE, g_debug_ctx.pid, (void *)1, 0);
-        kern_ptrace(PT_DETACH,   g_debug_ctx.pid, 0, 0);
+        kern_ptrace(PT_DETACH, g_debug_ctx.pid, 0, 0);
     }
 
     if (svc && svc->dbgctx.dbgfd > 0) {
@@ -260,6 +342,7 @@ int dispatch_debug_events(void) {
         kern_ptrace(PT_CONTINUE, g_pending_sig_pid, (void *)1, g_pending_signal);
         g_pending_sig_pid = 0;
         g_pending_signal = 0;
+        bp_disable_verify_sweep();
     }
 
     SceKernelTimeval now;
@@ -331,7 +414,7 @@ int dispatch_debug_events(void) {
             kern_ptrace(PT_STEP,      (int)lwpid, (void *)1,     0);
             int status2 = 0;
             while (wait4((int)g_debug_ctx.pid, &status2, 1, NULL) <= 0) {
-                sceKernelUsleep(250);
+                sceKernelUsleep(100);
             }
             pkt.dbreg64.dr[7] = dr7_orig;
             kern_ptrace(PT_SETDBREGS, (int)lwpid, &pkt.dbreg64, 0);
@@ -423,7 +506,7 @@ int dispatch_debug_events(void) {
                         break;
                     }
                 } else {
-                    sceKernelUsleep(250);
+                    sceKernelUsleep(100);
                 }
             }
 
@@ -487,9 +570,36 @@ int debug_set_breakpoint_handle(int fd, struct cmd_packet *packet) {
         sys_proc_rw(g_debug_ctx.pid, bp->address, &int3, 1, 1);
     } else if (slot->enabled) {
 
+        uint64_t bp_addr = slot->address;
+        uint32_t rewound[64];
+        int n_rewound = 0;
+
+        int numlwps = kern_ptrace(PT_GETNUMLWPS, (int)g_debug_ctx.pid, 0, 0);
+        if (numlwps > 0) {
+            uint32_t *lwpids = (uint32_t *)net_alloc_buffer((size_t)numlwps * sizeof(uint32_t));
+            if (lwpids && kern_ptrace(PT_GETLWPLIST, (int)g_debug_ctx.pid, lwpids, numlwps) > 0) {
+                struct __reg64 regs;
+                for (int i = 0; i < numlwps; i++) {
+                    errno = 0;
+                    if (kern_ptrace(PT_GETREGS, (int)lwpids[i], &regs, 0) == -1) continue;
+                    if (regs.r_rip == bp_addr + 1) {
+                        regs.r_rip = bp_addr;
+                        kern_ptrace(PT_SETREGS, (int)lwpids[i], &regs, 0);
+                        if (n_rewound < 64) rewound[n_rewound++] = lwpids[i];
+                    }
+                }
+            }
+            if (lwpids) free(lwpids);
+        }
+
         sys_proc_rw(g_debug_ctx.pid, slot->address, &slot->saved_byte, 1, 1);
         slot->enabled = 0;
         slot->address = 0;
+        (void)rewound; (void)n_rewound;
+
+        if (g_recently_disabled_count < BP_DISABLE_VERIFY_MAX) {
+            g_recently_disabled_bps[g_recently_disabled_count++] = bp_addr;
+        }
     }
 
     scePthreadMutexUnlock(&g_debug_mutex);
@@ -707,6 +817,7 @@ int debug_continue_handle(int fd, struct cmd_packet *packet) {
 
     int signal = (*pp == 1) ? 17 : (*pp == 2) ? 9 : 0;
     int r = kern_ptrace(PT_CONTINUE, (int)g_debug_ctx.pid, (void *)1, signal);
+    if (signal == 0) bp_disable_verify_sweep();
     net_send_int32(fd, ptrace_ok(r) ? CMD_SUCCESS : CMD_ERROR);
     return 0;
 }

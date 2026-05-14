@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 KSDK := ../ps4-ksdk/
 
 LFILE = ./kdebugger.x

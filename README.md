@@ -18,7 +18,7 @@ Note: A mirror of this repo is available on: https://git.slowb.ro/OpenSourcereR/
 
 ## Supported firmwares
 
-32 firmware versions across the 5.05–12.52 range. Each has a dedicated kernel
+33 firmware versions across the 5.05–13.00 range. Each has a dedicated kernel
 patch routine in [installer/source/installer.c](installer/source/installer.c);
 booting on an unsupported FW prints `unsupported firmware <N> - kernel not
 patched` to the kernel log and aborts cleanly.
@@ -33,9 +33,20 @@ patched` to the kernel log and aborts cleanly.
 | 10.xx | 10.00, 10.01, 10.50, 10.70, 10.71           |
 | 11.xx | 11.00, 11.02, 11.50, 11.52                  |
 | 12.xx | 12.00, 12.02, 12.50, 12.52                  |
+| 13.xx | 13.00 *(partial — see note below)*          |
 
 Clients can read the running FW with `CMD_FW_VERSION` (returns a `uint16_t` in
 `major*100 + minor` form - e.g. `0x1F4 = 500 = 5.00`).
+
+**13.00 limitation:** memory R/W, scanning, debugging (attach/breakpoints/regs/
+step/continue), maps, alloc/free, console commands, and kernel R/W all work as
+on any other supported firmware. **Commands that spawn a worker thread in the
+target process** — `CMD_PROC_INSTALL`, `CMD_PROC_CALL`, `CMD_PROC_ELF`,
+`CMD_PROC_ELF_RPC` — currently return `CMD_ERROR` on 13.00 because the
+libkernel.sprx symbol offsets (`scePthreadAttrInit`, `scePthreadAttrSetstacksize`,
+`scePthreadCreate`, `_thr_initial`) haven't been sourced for that firmware. Add
+them to the `proc_create_thread` switch in [kdebugger/source/proc.c](kdebugger/source/proc.c)
+to enable ELF injection / RPC on 13.00.
 
 ---
 
@@ -46,6 +57,15 @@ Clients can read the running FW with `CMD_FW_VERSION` (returns a `uint16_t` in
 - **Read and write target memory** in 64 KiB streamed chunks.
 - **List virtual memory maps (including missing sections improvements)** - ranges, protections, backing names.
 - **Query process metadata** - name, path, titleId, contentId.
+- **Identify the foreground app** (`0xBDDD0006`) - returns pid + titleid + contentid
+  + process name + the game's version, parsed server-side from the title's
+  `param.sfo`. Useful for clients that need to know what's currently running
+  without listing every process.
+- **Server-side stack walk** (`CMD_PROC_READ_STACK`, v1.2.2+) - the server
+  walks the RBP chain itself (up to 64 frames) and bundles each frame's
+  saved-RBP, return address, frame-local bytes, and a 200-byte code window
+  around the return address into one response. Clients avoid paying ~4 TCP
+  round-trips per stack frame.
 - **Change memory protection** on arbitrary target regions.
 - **Allocate / free / hint-allocate** memory inside any target process.
 
@@ -86,6 +106,20 @@ keep bandwidth low:
   targets in a region, deduplicated.
 - `CMD_PROC_FIND_XREFS_TO` - only instructions that reference a specific
   target address.
+
+### Built-in Keystone assembler (x86-64)
+A cross-compiled LLVM-MC Keystone (x86-only, no exceptions / no RTTI, static
+~4 MB) is embedded in the payload, exposed via the raw-literal opcode
+`0xBDAA0024`. Lets clients assemble asm text into machine code on the console
+itself - the on-console equivalent of what Reaper Studio does with its
+client-side `keystone.dll` when applying `VarType.ASM` patches.
+- Pure userspace - needs no attached process and no `CMD_PROC_AUTH` handshake.
+- Request: `u64 base_addr; u32 ks_opt_syntax;` + asm text (NUL not required).
+  `ks_opt_syntax` defaults to Intel; pass 1/2/3/4/5 for Intel/ATT/NASM/MASM/GAS.
+- Response: `CMD_SUCCESS` + `u32 byte_len; u32 insn_count;` + machine bytes,
+  or `CMD_ERROR` + `u32 ks_errno; u32 msg_len;` + Keystone's human-readable error.
+- The opcode is deliberately a raw literal (no `CMD_*` macro) so the published
+  `CMD_*` set that some clients enumerate stays unchanged.
 
 ### Memory scanning
 - **Value scan** (`CMD_PROC_SCAN`) - single-pass, 12 value types × 13 compare

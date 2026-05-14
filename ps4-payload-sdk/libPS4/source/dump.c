@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #include "dump.h"
 #include "elf64.h"
 #include "libc.h"

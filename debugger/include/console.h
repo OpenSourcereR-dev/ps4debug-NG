@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #ifndef _CONSOLE_H
 #define _CONSOLE_H
@@ -10,5 +11,6 @@ int console_handle(int fd, struct cmd_packet *packet);
 int console_reboot_handle(int fd, struct cmd_packet *packet);
 int console_print_handle(int fd, struct cmd_packet *packet);
 int console_notify_handle(int fd, struct cmd_packet *packet);
+int console_foreground_app_handle(int fd, struct cmd_packet *packet);
 
 #endif

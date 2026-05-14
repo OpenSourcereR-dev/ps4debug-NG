@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 CC	:= gcc
 AR	:= ar
 ODIR	:= build
 SDIR	:= source
 IDIR	:= include
-
 
 CFLAGS	:= -I$(IDIR) -Os -std=gnu11 -ffunction-sections -fdata-sections -fno-builtin -fPIE -nostartfiles -nostdlib -Wall -masm=intel -march=btver2 -mtune=btver2 -m64 -mabi=sysv -mcmodel=small
 CFILES	:= $(wildcard $(SDIR)/*.c)

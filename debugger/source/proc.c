@@ -1,20 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-only
 
 #include "proc.h"
 
-/* Zydis amalgamation - decoder is all we use. */
 #include "Zydis.h"
 
-/* -----------------------------------------------------------------------------
- * Disassembler helpers (Zydis-backed)
- *
- * Philosophy: keep the server side fast by reading target memory in big chunks,
- * decoding sequentially, and emitting a packed fixed-size record per instruction.
- * Clients filter / cross-reference on their side.
- * ---------------------------------------------------------------------------*/
+#define DISASM_READ_CHUNK  0x10000
 
-#define DISASM_READ_CHUNK  0x10000   /* 64 KB - matches CMD_PROC_READ cadence */
-
-/* Translate a ZydisDecodedInstruction into our packed wire record. */
 static void disasm_fill_entry(struct disasm_instr_entry *out,
                               uint64_t addr,
                               const ZydisDecodedInstruction *insn,
@@ -24,7 +15,6 @@ static void disasm_fill_entry(struct disasm_instr_entry *out,
     out->length = insn->length;
     out->mnemonic_lo = (uint8_t)(insn->mnemonic & 0xFF);
 
-    /* Control-flow categories */
     switch (insn->meta.category) {
         case ZYDIS_CATEGORY_CALL:          out->kind |= 0x01; break;
         case ZYDIS_CATEGORY_RET:           out->kind |= 0x02; break;
@@ -33,14 +23,11 @@ static void disasm_fill_entry(struct disasm_instr_entry *out,
         default: break;
     }
 
-    /* Scan visible operands for the first memory operand - that's what clients
-     * care about for pointer inference. (Few x86 instructions have more than
-     * one explicit memory operand; we record the first.) */
     for (ZyanU8 i = 0; i < insn->operand_count_visible; i++) {
         const ZydisDecodedOperand *op = &operands[i];
         if (op->type != ZYDIS_OPERAND_TYPE_MEMORY) continue;
 
-        out->kind |= 0x10;  /* HAS_MEM_OPERAND */
+        out->kind |= 0x10;
         if (op->actions & ZYDIS_OPERAND_ACTION_MASK_READ)  out->kind |= 0x40;
         if (op->actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) out->kind |= 0x80;
 
@@ -49,17 +36,14 @@ static void disasm_fill_entry(struct disasm_instr_entry *out,
         out->mem_scale     = op->mem.scale;
         out->mem_disp      = op->mem.disp.has_displacement ? op->mem.disp.value : 0;
 
-        /* RIP-relative target: compute absolute address. */
         if (op->mem.base == ZYDIS_REGISTER_RIP) {
             out->kind |= 0x20;
             out->rip_rel_target = addr + insn->length + (uint64_t)op->mem.disp.value;
         }
-        break;  /* first memory operand only */
+        break;
     }
 }
 
-/* Shared decode loop: iterate instructions, invoking the emitter callback.
- * Returns number of instructions decoded. */
 typedef void (*disasm_emit_fn)(uint64_t addr,
                                const ZydisDecodedInstruction *insn,
                                const ZydisDecodedOperand *operands,
@@ -85,7 +69,6 @@ static uint64_t disasm_iterate(uint32_t pid, uint64_t start, uint64_t length,
 
         sys_proc_rw(pid, start + off, chunk, read_len, 0);
 
-        /* Decode sequentially within the chunk. */
         uint32_t pos = 0;
         while (pos < read_len && emitted < max_instrs) {
             uint32_t avail = read_len - pos;
@@ -93,8 +76,7 @@ static uint64_t disasm_iterate(uint32_t pid, uint64_t start, uint64_t length,
                                                    (uint8_t *)chunk + pos, avail,
                                                    &insn, operands);
             if (!ZYAN_SUCCESS(r)) {
-                /* Advance one byte on decode failure - typical for data-in-code
-                 * or chunk-boundary splits. Next iteration retries. */
+
                 pos++;
                 continue;
             }
@@ -102,8 +84,6 @@ static uint64_t disasm_iterate(uint32_t pid, uint64_t start, uint64_t length,
             emitted++;
             pos += insn.length;
 
-            /* Guard against crossing chunk boundary mid-instruction: if we
-             * don't have room for another safe max-length instr (15 B), refill. */
             if (pos + ZYDIS_MAX_INSTRUCTION_LENGTH > read_len && remaining > read_len) {
                 break;
             }
@@ -115,7 +95,6 @@ static uint64_t disasm_iterate(uint32_t pid, uint64_t start, uint64_t length,
     return emitted;
 }
 
-/* ---- CMD_PROC_DISASM_REGION --------------------------------------------- */
 struct disasm_ctx {
     int fd;
     uint8_t *out_buf;
@@ -129,7 +108,7 @@ static void disasm_emit_record(uint64_t addr,
                                void *ctx_) {
     struct disasm_ctx *ctx = (struct disasm_ctx *)ctx_;
     if (ctx->out_used + DISASM_INSTR_ENTRY_SIZE > ctx->out_cap) {
-        /* Flush buffer. */
+
         net_send_all(ctx->fd, ctx->out_buf, (int)ctx->out_used);
         ctx->out_used = 0;
     }
@@ -151,7 +130,7 @@ int proc_disasm_region_handle(int fd, struct cmd_packet *packet) {
 
     struct disasm_ctx ctx;
     ctx.fd = fd;
-    ctx.out_cap = 0x10000;  /* 64 KB send buffer */
+    ctx.out_cap = 0x10000;
     ctx.out_used = 0;
     ctx.out_buf = (uint8_t *)net_alloc_buffer(ctx.out_cap);
     if (!ctx.out_buf) {
@@ -164,13 +143,10 @@ int proc_disasm_region_handle(int fd, struct cmd_packet *packet) {
     (void)disasm_iterate(dp->pid, dp->address, dp->length,
                           dp->max_entries, disasm_emit_record, &ctx);
 
-    /* Flush any remaining buffered records. */
     if (ctx.out_used > 0) {
         net_send_all(fd, ctx.out_buf, (int)ctx.out_used);
     }
 
-    /* Sentinel record: all-0xFF, 32 bytes. A real instruction can never hit this
-     * (length 0xFF is invalid). Client reads records until sentinel. */
     uint8_t sentinel[DISASM_INSTR_ENTRY_SIZE];
     memset(sentinel, 0xFF, sizeof(sentinel));
     net_send_all(fd, sentinel, sizeof(sentinel));
@@ -179,14 +155,9 @@ int proc_disasm_region_handle(int fd, struct cmd_packet *packet) {
     return 0;
 }
 
-/* ---- CMD_PROC_EXTRACT_CODE_XREFS ---------------------------------------
- * Disassemble the given region and emit only the resolved RIP-relative
- * target addresses (deduped client-side). Much smaller payload than full
- * disassembly - useful for pointer-scan filtering / static-pointer lookup. */
-
 struct xrefs_ctx {
     int fd;
-    uint64_t *buf;     /* list of target addresses */
+    uint64_t *buf;
     uint32_t cap;
     uint32_t used;
 };
@@ -221,7 +192,7 @@ int proc_extract_code_xrefs_handle(int fd, struct cmd_packet *packet) {
 
     struct xrefs_ctx ctx;
     ctx.fd = fd;
-    ctx.cap = 0x2000;  /* 8K u64s = 64 KB per flush */
+    ctx.cap = 0x2000;
     ctx.used = 0;
     ctx.buf = (uint64_t *)net_alloc_buffer(ctx.cap * sizeof(uint64_t));
     if (!ctx.buf) {
@@ -238,25 +209,18 @@ int proc_extract_code_xrefs_handle(int fd, struct cmd_packet *packet) {
     if (ctx.used > 0) {
         net_send_all(fd, ctx.buf, (int)(ctx.used * sizeof(uint64_t)));
     }
-    /* Trailer: number of xrefs emitted. */
-    uint32_t total_instrs = (uint32_t)emitted;
-    uint32_t total_xrefs  = 0;  /* caller counts bytes / 8; this is diagnostic */
-    (void)total_instrs; (void)total_xrefs;
-    uint64_t sentinel = 0;  /* harmless; client reads until socket drain / response length */
 
-    /* Signal end: send a final count header of bytes transmitted. */
-    /* The client already knows via its expected byte count so we just close this frame. */
-    /* Send sentinel 0xFFFFFFFFFFFFFFFF to terminate the xref stream. */
+    uint32_t total_instrs = (uint32_t)emitted;
+    uint32_t total_xrefs  = 0;
+    (void)total_instrs; (void)total_xrefs;
+    uint64_t sentinel = 0;
+
     sentinel = 0xFFFFFFFFFFFFFFFFULL;
     net_send_all(fd, &sentinel, sizeof(uint64_t));
 
     free(ctx.buf);
     return 0;
 }
-
-/* ---- CMD_PROC_FIND_XREFS_TO --------------------------------------------
- * Scan a region and return only instruction addresses that reference the
- * given target via RIP-relative memory operand. */
 
 struct xrefs_to_ctx {
     int fd;
@@ -386,6 +350,95 @@ int proc_read_handle(int fd, struct cmd_packet *packet) {
     }
 
     free(data);
+    return 0;
+}
+
+#define PROC_USR_MIN  0x10000ULL
+#define PROC_USR_MAX  0x0000800000000000ULL
+static inline int proc_addr_range_ok(uint64_t a, uint64_t len) {
+    if (len == 0) return 0;
+    if (a < PROC_USR_MIN || a >= PROC_USR_MAX) return 0;
+    if (a + len < a) return 0;
+    if (a + len > PROC_USR_MAX) return 0;
+    return 1;
+}
+
+int proc_read_stack_handle(int fd, struct cmd_packet *packet) {
+    struct cmd_proc_read_stack_packet *sp =
+        (struct cmd_proc_read_stack_packet *)packet->data;
+    if (!sp) { net_send_int32(fd, CMD_DATA_NULL); return 1; }
+
+    uint32_t pid   = sp->pid;
+    uint64_t rbp   = sp->rbp;
+    uint64_t rsp   = sp->rsp;
+    uint32_t depth = sp->depth;
+    if (depth == 0) depth = 1;
+    if (depth > CMD_PROC_READ_STACK_MAX_DEPTH) depth = CMD_PROC_READ_STACK_MAX_DEPTH;
+
+    uint64_t cap = 4 + (uint64_t)depth *
+                   (32 + 12 + CMD_PROC_READ_STACK_LOCALS_CAP + CMD_PROC_READ_STACK_CODE_LEN);
+    uint8_t *buf = (uint8_t *)net_alloc_buffer(cap);
+    if (!buf) { net_send_int32(fd, CMD_DATA_NULL); return 1; }
+
+    uint8_t  code_scratch[CMD_PROC_READ_STACK_CODE_LEN];
+    uint32_t off = 4;
+    uint32_t n_frames = 0;
+
+    uint64_t cur_rbp = rbp, cur_rsp = rsp;
+    for (uint32_t i = 0; i < depth; i++) {
+
+        if (!proc_addr_range_ok(cur_rbp, 16)) break;
+
+        uint64_t pair[2] = { 0, 0 };
+        sys_proc_rw((uint64_t)pid, cur_rbp, pair, 16, 0);
+        uint64_t saved_rbp = pair[0];
+        uint64_t ret_addr  = pair[1];
+
+        int64_t  fs = (int64_t)cur_rbp - (int64_t)cur_rsp + 8;
+        uint32_t flags = 0;
+        uint32_t locals_len = 0;
+        if (fs <= 0 || (uint64_t)fs > CMD_PROC_READ_STACK_LOCALS_CAP
+            || !proc_addr_range_ok(cur_rsp, (uint64_t)fs)) {
+            flags |= 1u;
+        } else {
+            locals_len = (uint32_t)fs;
+        }
+        uint64_t code_addr = ret_addr - CMD_PROC_READ_STACK_CODE_OFF;
+        uint32_t code_len  = proc_addr_range_ok(code_addr, CMD_PROC_READ_STACK_CODE_LEN)
+                             ? CMD_PROC_READ_STACK_CODE_LEN : 0u;
+
+        if (off + 32 + 12 + locals_len + code_len > cap) break;
+
+        memcpy(buf + off, &cur_rbp,   8); off += 8;
+        memcpy(buf + off, &cur_rsp,   8); off += 8;
+        memcpy(buf + off, &saved_rbp, 8); off += 8;
+        memcpy(buf + off, &ret_addr,  8); off += 8;
+        memcpy(buf + off, &flags,      4); off += 4;
+        memcpy(buf + off, &locals_len, 4); off += 4;
+        memcpy(buf + off, &code_len,   4); off += 4;
+        if (locals_len) {
+            memset(buf + off, 0, locals_len);
+            sys_proc_rw((uint64_t)pid, cur_rsp, buf + off, locals_len, 0);
+            off += locals_len;
+        }
+        if (code_len) {
+            memset(code_scratch, 0, sizeof(code_scratch));
+            sys_proc_rw((uint64_t)pid, code_addr, code_scratch, code_len, 0);
+            memcpy(buf + off, code_scratch, code_len);
+            off += code_len;
+        }
+        n_frames++;
+
+        if (saved_rbp == 0) break;
+        cur_rsp = cur_rbp + 8;
+        cur_rbp = saved_rbp;
+    }
+
+    memcpy(buf, &n_frames, 4);
+    net_send_int32(fd, CMD_SUCCESS);
+    net_send_all(fd, &off, 4);
+    net_send_all(fd, buf, (int)off);
+    free(buf);
     return 0;
 }
 
@@ -2202,6 +2255,7 @@ int proc_handle(int fd, struct cmd_packet *packet) {
     switch(packet->cmd) {
         case CMD_PROC_LIST:           return proc_list_handle(fd, packet);
         case CMD_PROC_READ:           return proc_read_handle(fd, packet);
+        case CMD_PROC_READ_STACK:     return proc_read_stack_handle(fd, packet);
         case CMD_PROC_WRITE:          return proc_write_handle(fd, packet);
         case CMD_PROC_MAPS:           return proc_maps_handle(fd, packet);
         case CMD_PROC_INTALL:         return proc_install_handle(fd, packet);
@@ -2223,6 +2277,9 @@ int proc_handle(int fd, struct cmd_packet *packet) {
         case CMD_PROC_SCAN_START:     return proc_scan_start_handle(fd, packet);
         case CMD_PROC_SCAN_COUNT:     return proc_scan_count_handle(fd, packet);
         case CMD_PROC_SCAN_GET:       return proc_scan_get_handle(fd, packet);
+        case 0xBDAA0024u:             return proc_assemble_handle(fd, packet);
     }
+
+    net_send_int32(fd, CMD_ERROR);
     return 1;
 }

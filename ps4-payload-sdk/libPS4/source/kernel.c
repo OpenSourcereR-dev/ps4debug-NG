@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 #include "module.h"
 #include "syscall.h"
 
@@ -7,7 +9,11 @@ int libKernelHandle;
 
 int **__stack_chk_guard;
 void (*__stack_chk_fail)(void);
-int *(*__error)();
+static int *(*_p_error)(void);
+static int _errno_fallback;
+
+__attribute__((visibility("hidden")))
+int *__error(void) { return _p_error ? _p_error() : &_errno_fallback; }
 
 char *(*sceKernelGetFsSandboxRandomWord)();
 
@@ -61,7 +67,7 @@ SYSCALL(ioctl, 54);
 SYSCALL(kexec, 11);
 
 void initKernel(void) {
-  __error = NULL;
+  _p_error = NULL;
 
   if (loadModule("libkernel.sprx", &libKernelHandle)) {
     if (loadModule("libkernel_web.sprx", &libKernelHandle)) {
@@ -71,7 +77,7 @@ void initKernel(void) {
 
   RESOLVE(libKernelHandle, __stack_chk_guard);
   RESOLVE(libKernelHandle, __stack_chk_fail);
-  RESOLVE(libKernelHandle, __error);
+  getFunctionAddressByName(libKernelHandle, "__error", &_p_error);
 
   RESOLVE(libKernelHandle, sceKernelGetFsSandboxRandomWord);
 

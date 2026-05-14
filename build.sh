@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# SPDX-License-Identifier: GPL-3.0-only
 
 clean_build() {
     cd ps4-ksdk
