@@ -1,0 +1,10 @@
+# Force LF for files that must execute under WSL/Linux regardless of the
+# host's git core.autocrlf setting. Without this, Windows clones convert
+# shebangs/Makefiles to CRLF and the WSL build fails with
+# "bash: ./build.sh: cannot execute: required file not found".
+*.sh        text eol=lf
+*.s         text eol=lf
+*.S         text eol=lf
+*.x         text eol=lf
+Makefile    text eol=lf
+*.mk        text eol=lf
